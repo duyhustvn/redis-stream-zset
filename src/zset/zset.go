@@ -7,6 +7,8 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"redis-stream-demo/src/config"
+	redisclient "redis-stream-demo/src/pkg/redis"
 	"strconv"
 	"strings"
 	"time"
@@ -50,7 +52,15 @@ type EventLog struct {
 }
 
 func init() {
-	rdb = redis.NewClient(&redis.Options{Addr: "localhost:6379", Password: "changeme"})
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		log.Fatalf("Cannot load env: %+v", err)
+	}
+
+	rdb, err = redisclient.NewRedisClient(cfg.RedisConfig)
+	if err != nil {
+		log.Fatalf("Failed to init redis client: %+v", err)
+	}
 
 	var st sonyflake.Settings
 	// FIX CỨNG mốc thời gian để chống lỗi đồng hồ chạy lùi khi restart
@@ -151,7 +161,6 @@ func generateData(count int) (uint64, error) {
 	return lastSFID, nil
 }
 
-// --- API 1 & 2 (Giữ nguyên logic gọi hàm generateData) ---
 func handleInit(w http.ResponseWriter, r *http.Request) {
 	count := 150000
 	if c := r.URL.Query().Get("count"); c != "" {
@@ -179,8 +188,8 @@ func handleGenerate(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"message": "Generate success", "last_id": lastID})
 }
 
-// --- API 3: Kéo Delta Log bằng Lexicographical ZRange ---
 func handleSync(w http.ResponseWriter, r *http.Request) {
+	apiStartTime := time.Now()
 	w.Header().Set("Content-Type", "application/json")
 	lastIDStr := r.URL.Query().Get("last_id")
 
@@ -258,6 +267,9 @@ func handleSync(w http.ResponseWriter, r *http.Request) {
 			events = append(events, logEntry)
 		}
 	}
+
+	elapsed := time.Since(apiStartTime).Milliseconds()
+	fmt.Printf("Elapsed Time: %d mili \n", elapsed)
 
 	// Nếu không có data nào trong khoảng (last_id -> safe_id)
 	if len(events) == 0 {

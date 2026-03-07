@@ -23,6 +23,6 @@ func NewRedisStandaloneClient(redisCfg config.RedisConfig) (*redis.Client, error
 	if err != nil {
 		log.Fatalf("Could not connect: %v", err)
 	}
-	log.Println("Connected successfully:", pong)
+	log.Println("Connected redis standalone successfully:", pong)
 	return rdb, nil
 }

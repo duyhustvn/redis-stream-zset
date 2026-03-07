@@ -7,6 +7,8 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"redis-stream-demo/src/config"
+	redisclient "redis-stream-demo/src/pkg/redis"
 	"strconv"
 	"strings"
 	"time"
@@ -48,10 +50,15 @@ type EventLog struct {
 }
 
 func init() {
-	rdb = redis.NewClient(&redis.Options{
-		Addr:     "172.17.0.1:6379",
-		Password: "changeme",
-	})
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		log.Fatalf("Cannot load env: %+v", err)
+	}
+
+	_, err = redisclient.NewRedisClient(cfg.RedisConfig)
+	if err != nil {
+		log.Fatalf("Failed to init redis client: %+v", err)
+	}
 
 	var st sonyflake.Settings
 	// Khởi tạo một lần và không bao giờ thay đổi mốc này ở các lần restart server.
