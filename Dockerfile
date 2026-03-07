@@ -1,10 +1,14 @@
 FROM golang:1.25-alpine AS builder
 
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+
 WORKDIR /
 
 COPY go.mod go.sum ./
 RUN go mod download
 
+COPY src ./src
 COPY main.go .
 
 # Build the Go binary for Linux

@@ -1,0 +1,7 @@
+redis:
+  mode: "standalone"
+  address: "localhost:6379"
+  password: "changeme"
+
+server:
+  port: 8081

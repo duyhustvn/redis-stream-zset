@@ -8,13 +8,16 @@ export const options = {
     duration: '30s',
 };
 
+
+const baseUrl = `http://localhost:8081`;
+
 // 1. GIAI ĐOẠN SETUP (Chạy 1 lần duy nhất bởi 1 thread)
 export function setup() {
     // Đưa vào 1 last_id hợp lệ (có thể lấy từ /api/init) làm mốc ban đầu
     let base_sid = "115199251122159880"; // <--- BẠN NHỚ THAY SỐ NÀY
 
     // Kéo trước 2000 bản ghi để tạo thành một "kho" ID hợp lệ
-    let url = `http://localhost:8080/api/sync?last_id=${base_sid}&limit=2000`;
+    let url = `${baseUrl}/api/sync?last_id=${base_sid}&limit=2000`;
     let res = http.get(url);
 
     let valid_sids = [base_sid]; // Dự phòng nếu gọi lỗi thì vẫn có 1 ID
@@ -40,7 +43,7 @@ export default function(data) {
     let limit = 1000;
 
     for (let i = 0; i < 5; i++) {
-        let url = `http://localhost:8081/api/sync?last_id=${current_last_id}&limit=${limit}`;
+        let url = `${baseUrl}/api/sync?last_id=${current_last_id}&limit=${limit}`;
         let res = http.get(url);
 
         check(res, {

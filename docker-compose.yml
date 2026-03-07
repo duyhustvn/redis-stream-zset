@@ -1,7 +1,7 @@
 services:
-  redis_stream:
-    image: redis-stream:1.0.0
-    container_name: redis-stream
+  redis_stream_zset:
+    image: redis-stream-zset:1.0.0
+    container_name: redis-stream-set
     ports:
       - 8081:8081
 
