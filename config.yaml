@@ -2,6 +2,8 @@ redis:
   mode: "standalone"
   address: "localhost:6379"
   password: "changeme"
+  master_name: ""
 
 server:
   port: 8081
+

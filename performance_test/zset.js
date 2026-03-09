@@ -4,8 +4,8 @@ import { randomItem } from 'https://jslib.k6.io/k6-utils/1.2.0/index.js';
 
 // Cấu hình tải
 export const options = {
-    vus: 500,        // Giả lập 500 CCU
-    duration: '30s', // Chạy dồn dập trong 30 giây
+    vus: 100,        // Giả lập 100 CCU
+    duration: '30s', // Chạy trong 30 giây
 };
 
 const baseUrl = `http://localhost:8081`;
@@ -31,10 +31,10 @@ export function setup() {
 export default function(data) {
     // Mỗi VU (Client) bốc ngẫu nhiên một ID để bắt đầu đồng bộ
     let current_last_id = randomItem(data.sids);
-    let limit = 1000;
+    let limit = 15000;
 
-    // Giả lập hành vi phân trang: Client kéo data liên tục tối đa 5 lần
-    for (let i = 0; i < 5; i++) {
+    // Client chay 10 lan moi lan 15k de lay 150k 
+    for (let i = 0; i < 10; i++) {
         let url = `${baseUrl}/api/sync?last_id=${current_last_id}&limit=${limit}`;
         let res = http.get(url);
 

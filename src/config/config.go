@@ -14,6 +14,12 @@ type Config struct {
 func LoadConfig() (config *Config, err error) {
 	v := viper.New()
 
+	v.SetDefault("server.port", 8081)
+	v.SetDefault("redis.mode", "standalone")
+	v.SetDefault("redis.address", "localhost:6379")
+	v.SetDefault("redis.password", "changeme")
+	v.SetDefault("redis.master_name", "")
+
 	// config read from yaml
 	v.AddConfigPath(".") // search at this directory
 	v.SetConfigName("config")

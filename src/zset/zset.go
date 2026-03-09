@@ -89,22 +89,6 @@ func randomString(n int) string {
 	return string(s)
 }
 
-// --- Hàm tính Mốc An Toàn (Watermark) ---
-func getSafeSID() uint64 {
-	// Lấy thời gian hiện tại LÙI LẠI 5 giây
-	safeTime := time.Now().Add(-WatermarkDelay)
-	startTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-
-	elapsed := safeTime.Sub(startTime)
-	if elapsed < 0 {
-		return 0
-	}
-
-	// Đổi ra đơn vị 10ms của Sonyflake và dịch trái 24 bit
-	timeUnits := uint64(elapsed.Milliseconds() / 10)
-	return timeUnits << 24
-}
-
 // --- Hàm Helper sinh data ---
 func generateData(count int) (uint64, error) {
 	pipe := rdb.Pipeline()
@@ -199,12 +183,12 @@ func handleSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := 1000
+	limit := 10000
 	if l := r.URL.Query().Get("limit"); l != "" {
 		limit, _ = strconv.Atoi(l)
 	}
 
-	// 1. Kiểm tra Out of Sync (Lấy bản ghi cũ nhất trong ZSET)
+	// Kiểm tra Out of Sync (Lấy bản ghi cũ nhất trong ZSET)
 	oldestRecords, err := rdb.ZRange(ctx, ZSetName, 0, 0).Result()
 	if err == nil && len(oldestRecords) > 0 {
 		// Bóc tách SID từ chuỗi member "000016777216327946:{"id..."}"
@@ -221,23 +205,10 @@ func handleSync(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 2. Tính toán Watermark (Chỉ quét đến dữ liệu của 5 giây trước)
-	safeSID := getSafeSID()
+	// Thực hiện Range Query theo từ điển (Lexicographical) bằng ZRangeArgs
+	minLex := fmt.Sprintf("(%020d:", clientLastSFID) // '(' nghĩa là Lớn hơn
+	maxLex := "+"                                    // '+' nghĩa là phần tử lớn nhất
 
-	// Nếu client đòi data mới hơn cả safeSID (tức là đòi data của 5s gần nhất), bắt nó chờ
-	if clientLastSFID >= safeSID {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status": "up_to_date",
-			"events": []EventLog{},
-		})
-		return
-	}
-
-	// 3. Thực hiện Range Query theo từ điển (Lexicographical) bằng ZRangeArgs
-	minLex := fmt.Sprintf("(%020d:", clientLastSFID) // '(' nghĩa là Lớn hơn hẳn
-	maxLex := fmt.Sprintf("[%020d:\xff", safeSID)    // '[' nghĩa là Nhỏ hơn hoặc bằng safeSID
-
-	// Dùng ZRangeArgs thay cho ZRangeByLex đã bị deprecated
 	members, err := rdb.ZRangeArgs(ctx, redis.ZRangeArgs{
 		Key:    ZSetName,
 		ByLex:  true, // Bật chế độ quét theo Lexicographical (bảng chữ cái)
