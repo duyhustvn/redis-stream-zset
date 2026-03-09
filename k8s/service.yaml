@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-stream-zset
+  labels:
+    app: redis-stream-zset
+spec:
+  ports:
+    - port: 80
+      protocol: TCP
+      targetPort: 8081 # forward to this port of container
+  selector:
+    app: redis-stream-zset

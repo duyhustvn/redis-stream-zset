@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-stream-zset
+  labels:
+    app: redis-stream-zset
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-stream-zset
+  template:
+    metadata:
+      labels:
+        app: redis-stream-zset
+    spec:
+      containers:
+        - name: redis-stream-zset
+          image: registry.local:8000/redis-stream-zset:1.0.0
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8081
+          env:
+            - name: REDIS_MODE
+              value: sentinel
+            - name: REDIS_ADDRESS
+              value: redis-headless:26379
+            - name: REDIS_MASTER_NAME
+              value: redis-master
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: redis-password
