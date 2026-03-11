@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net/http"
 	"redis-stream-demo/src/config"
+	"redis-stream-demo/src/model"
 	redisclient "redis-stream-demo/src/pkg/redis"
 	"strconv"
 	"strings"
@@ -28,28 +29,6 @@ var (
 	rdb *redis.Client
 	sf  *sonyflake.Sonyflake
 )
-
-// --- STRUCT DATA (Giữ nguyên như cũ) ---
-type Meta struct {
-	SubCategory string `json:"subCategory"`
-}
-
-type PhoneNumber struct {
-	Value         string `json:"value"`
-	Carrier       string `json:"carrier"`
-	Category      string `json:"category"`
-	RiskLevel     int    `json:"risk_level"`
-	Meta          Meta   `json:"meta"`
-	UserRiskScore int    `json:"user_risk_score"`
-}
-
-type EventLog struct {
-	ID          string      `json:"id"`
-	PhoneNumber PhoneNumber `json:"phoneNumber"`
-	Type        string      `json:"type"`
-	CreatedTime int64       `json:"createdTime"`
-	SID         uint64      `json:"sid"`
-}
 
 func init() {
 	cfg, err := config.LoadConfig()
@@ -102,14 +81,14 @@ func generateData(count int) (uint64, error) {
 		id, _ := sf.NextID()
 		lastSFID = id
 
-		logEntry := EventLog{
+		logEntry := model.EventLog{
 			ID: randomString(20),
-			PhoneNumber: PhoneNumber{
+			PhoneNumber: model.PhoneNumber{
 				Value:         fmt.Sprintf("+84%d", 900000000+rand.Intn(99999999)),
 				Carrier:       carriers[rand.Intn(len(carriers))],
 				Category:      categories[rand.Intn(len(categories))],
 				RiskLevel:     100,
-				Meta:          Meta{SubCategory: "spam"},
+				Meta:          model.Meta{SubCategory: "spam"},
 				UserRiskScore: rand.Intn(100),
 			},
 			Type:        actions[rand.Intn(len(actions))],
@@ -224,7 +203,7 @@ func handleSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 4. Parse dữ liệu trả về
-	var events []EventLog
+	var events []model.EventLog
 	var newLastID uint64 = clientLastSFID
 
 	for _, member := range members {
@@ -233,7 +212,7 @@ func handleSync(w http.ResponseWriter, r *http.Request) {
 			sfid, _ := strconv.ParseUint(parts[0], 10, 64)
 			newLastID = sfid
 
-			var logEntry EventLog
+			var logEntry model.EventLog
 			json.Unmarshal([]byte(parts[1]), &logEntry)
 			events = append(events, logEntry)
 		}
@@ -246,7 +225,7 @@ func handleSync(w http.ResponseWriter, r *http.Request) {
 	if len(events) == 0 {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"status": "up_to_date",
-			"events": []EventLog{},
+			"events": []model.EventLog{},
 		})
 		return
 	}

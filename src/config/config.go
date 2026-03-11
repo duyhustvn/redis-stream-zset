@@ -15,6 +15,8 @@ func LoadConfig() (config *Config, err error) {
 	v := viper.New()
 
 	v.SetDefault("server.port", 8081)
+	v.SetDefault("server.mode", "stream")
+
 	v.SetDefault("redis.mode", "standalone")
 	v.SetDefault("redis.address", "localhost:6379")
 	v.SetDefault("redis.password", "changeme")

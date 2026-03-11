@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net/http"
 	"redis-stream-demo/src/config"
+	"redis-stream-demo/src/model"
 	redisclient "redis-stream-demo/src/pkg/redis"
 	"strconv"
 	"strings"
@@ -28,34 +29,13 @@ var (
 	sf  *sonyflake.Sonyflake
 )
 
-type Meta struct {
-	SubCategory string `json:"subCategory"`
-}
-
-type PhoneNumber struct {
-	Value         string `json:"value"`
-	Carrier       string `json:"carrier"`
-	Category      string `json:"category"`
-	RiskLevel     int    `json:"risk_level"`
-	Meta          Meta   `json:"meta"`
-	UserRiskScore int    `json:"user_risk_score"`
-}
-
-type EventLog struct {
-	ID          string      `json:"id"`
-	PhoneNumber PhoneNumber `json:"phoneNumber"`
-	Type        string      `json:"type"`
-	CreatedTime int64       `json:"createdTime"`
-	SID         uint64      `json:"sid"`
-}
-
 func init() {
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		log.Fatalf("Cannot load env: %+v", err)
 	}
 
-	_, err = redisclient.NewRedisClient(cfg.RedisConfig)
+	rdb, err = redisclient.NewRedisClient(cfg.RedisConfig)
 	if err != nil {
 		log.Fatalf("Failed to init redis client: %+v", err)
 	}
@@ -94,14 +74,14 @@ func generateData(count int) (uint64, error) {
 		redisID := fmt.Sprintf("%d-0", id)
 
 		// Tạo Mock Object khớp với JSON mẫu
-		logEntry := EventLog{
+		logEntry := model.EventLog{
 			ID: randomString(20), // VD: 6QawtpwB-xMT8VeR6JaW
-			PhoneNumber: PhoneNumber{
+			PhoneNumber: model.PhoneNumber{
 				Value:         fmt.Sprintf("+84%d", 900000000+rand.Intn(99999999)),
 				Carrier:       carriers[rand.Intn(len(carriers))],
 				Category:      categories[rand.Intn(len(categories))],
 				RiskLevel:     100,
-				Meta:          Meta{SubCategory: "spam"},
+				Meta:          model.Meta{SubCategory: "spam"},
 				UserRiskScore: rand.Intn(100),
 			},
 			Type:        actions[rand.Intn(len(actions))],
@@ -232,7 +212,7 @@ func handleSync(w http.ResponseWriter, r *http.Request) {
 	if err == redis.Nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"status": "up_to_date",
-			"events": []EventLog{}, // Trả về mảng rỗng
+			"events": []model.EventLog{}, // Trả về mảng rỗng
 		})
 		return
 	} else if err != nil {
@@ -240,7 +220,7 @@ func handleSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var events []EventLog
+	var events []model.EventLog
 	var newLastID uint64
 
 	for _, msg := range streams[0].Messages {
@@ -248,7 +228,7 @@ func handleSync(w http.ResponseWriter, r *http.Request) {
 		sfid, _ := strconv.ParseUint(parts[0], 10, 64)
 		newLastID = sfid
 
-		var logEntry EventLog
+		var logEntry model.EventLog
 		dataStr := msg.Values["data"].(string)
 		json.Unmarshal([]byte(dataStr), &logEntry)
 
