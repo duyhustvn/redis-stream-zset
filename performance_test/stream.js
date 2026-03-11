@@ -1,7 +1,6 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
-// Import thư viện randomItem có sẵn của k6
-import { randomItem } from 'https://jslib.k6.io/k6-utils/1.2.0/index.js';
+import { randomItem } from './k6-utils.js';
 
 export const options = {
     vus: 500,
