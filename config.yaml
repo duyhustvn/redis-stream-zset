@@ -6,5 +6,5 @@ redis:
 
 server:
   port: 8081
-  mode: "stream"
+  mode: "combine"
 

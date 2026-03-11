@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"redis-stream-demo/src/combine"
 	"redis-stream-demo/src/config"
 	redisclient "redis-stream-demo/src/pkg/redis"
 	"redis-stream-demo/src/stream"
@@ -26,6 +27,6 @@ func main() {
 	case "stream":
 		stream.Routes()
 	default:
-		log.Fatalln("Not support ", cfg.Server.Mode)
+		combine.Routes()
 	}
 }
