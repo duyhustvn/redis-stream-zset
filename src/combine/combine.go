@@ -186,8 +186,16 @@ func packChunkIfNeeded() {
 	}
 }
 
+type SyncResponse struct {
+	Count int              `json:"count"`
+	Data  []model.EventLog `json:"data"`
+}
+
 // --- API 2: Lấy dữ liệu (Đồng bộ) ---
 func syncHandler(w http.ResponseWriter, r *http.Request) {
+	// 1. Đánh dấu thời điểm bắt đầu API
+	apiStartTime := time.Now()
+
 	lastIDStrQuery := r.URL.Query().Get("last_id")
 	lastID, err := strconv.ParseUint(lastIDStrQuery, 10, 64)
 	if err != nil {
@@ -196,50 +204,79 @@ func syncHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	// FORMAT QUERY THEO ZLEX: Tạo chuỗi min cực chuẩn
-	// lastIDStr = "00000000000123456789"
 	lastIDStr := fmt.Sprintf("%020d", lastID)
-	// "(" nghĩa là lớn hơn hẳn (không lấy dấu bằng)
 	minLex := "(" + lastIDStr + ":"
 
-	// 1. TÌM TRONG CHUNK REGISTRY BẰNG ZRANGEBYLEX
-	chunks, _ := rdb.ZRangeByLex(ctx, ChunkRegistry, &redis.ZRangeBy{
-		Min: minLex, Max: "+", Offset: 0, Count: 1, // "+" là giá trị lớn nhất vô cực
+	var resultEvents []model.EventLog
+	var redisQueryTime time.Duration // Biến lưu tổng thời gian gọi Redis
+
+	// 2. Đo thời gian query Registry
+	redisStartTime := time.Now()
+	chunks, _ := rdb.ZRangeArgs(ctx, redis.ZRangeArgs{
+		Key:    ChunkRegistry,
+		Start:  minLex,
+		Stop:   "+",
+		ByLex:  true,
+		Offset: 0,
+		Count:  1,
 	}).Result()
+	redisQueryTime += time.Since(redisStartTime)
 
 	if len(chunks) > 0 {
-		// chunks[0] có dạng "00000123456789012345:scam_alert:chunk:123456..."
 		parts := strings.SplitN(chunks[0], ":", 2)
 		chunkKey := parts[1]
 
+		// Đo thêm thời gian GET dữ liệu chunk từ Redis
+		getChunkStartTime := time.Now()
 		chunkData, _ := rdb.Get(ctx, chunkKey).Result()
+		redisQueryTime += time.Since(getChunkStartTime)
+
 		var allEvents []model.EventLog
 		json.Unmarshal([]byte(chunkData), &allEvents)
 
-		var filtered []model.EventLog
 		for _, ev := range allEvents {
-			if ev.SID > lastID { // Vẫn dùng uint64 để filter trên Memory Go rất nhanh
-				filtered = append(filtered, ev)
+			if ev.SID > lastID {
+				resultEvents = append(resultEvents, ev)
 			}
 		}
-		json.NewEncoder(w).Encode(filtered)
-		return
-	}
+	} else {
+		// NẾU KHÔNG CÓ TRONG REGISTRY -> TÌM TRONG ACTIVE EVENTS
+		activeStartTime := time.Now()
+		activeEventsStr, _ := rdb.ZRangeArgs(ctx, redis.ZRangeArgs{
+			Key:    ActiveEvents,
+			Start:  minLex,
+			Stop:   "+",
+			ByLex:  true,
+			Offset: 0,
+			Count:  int64(ChunkSize), // go-redis yêu cầu int64 cho Count
+		}).Result()
+		redisQueryTime += time.Since(activeStartTime)
 
-	// 2. NẾU KHÔNG CÓ TRONG REGISTRY -> TÌM TRONG ACTIVE EVENTS
-	activeEventsStr, _ := rdb.ZRangeByLex(ctx, ActiveEvents, &redis.ZRangeBy{
-		Min: minLex, Max: "+", Offset: 0, Count: ChunkSize,
-	}).Result()
-
-	var active []model.EventLog
-	for _, evStr := range activeEventsStr {
-		parts := strings.SplitN(evStr, ":", 2)
-		if len(parts) == 2 {
-			var ev model.EventLog
-			json.Unmarshal([]byte(parts[1]), &ev)
-			active = append(active, ev)
+		for _, evStr := range activeEventsStr {
+			parts := strings.SplitN(evStr, ":", 2)
+			if len(parts) == 2 {
+				var ev model.EventLog
+				json.Unmarshal([]byte(parts[1]), &ev)
+				resultEvents = append(resultEvents, ev)
+			}
 		}
 	}
 
-	json.NewEncoder(w).Encode(active)
+	// Tránh trả về null nếu không có dữ liệu, khởi tạo mảng rỗng
+	if resultEvents == nil {
+		resultEvents = []model.EventLog{}
+	}
+
+	// 3. Format Response mới thêm thuộc tính Count
+	response := SyncResponse{
+		Count: len(resultEvents),
+		Data:  resultEvents,
+	}
+
+	json.NewEncoder(w).Encode(response)
+
+	// 4. Tính toán tổng thời gian API và Log ra console
+	apiDuration := time.Since(apiStartTime)
+	log.Printf("[SYNC API] last_id: %d | Records: %d | Redis Time: %v | Total API Time: %v",
+		lastID, response.Count, redisQueryTime, apiDuration)
 }
