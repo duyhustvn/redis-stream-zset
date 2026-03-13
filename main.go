@@ -2,7 +2,7 @@ package main
 
 import (
 	"log"
-	"redis-stream-demo/src/combine"
+	chunk "redis-stream-demo/src/chunk"
 	"redis-stream-demo/src/config"
 	redisclient "redis-stream-demo/src/pkg/redis"
 	"redis-stream-demo/src/stream"
@@ -27,6 +27,6 @@ func main() {
 	case "stream":
 		stream.Routes()
 	default:
-		combine.Routes()
+		chunk.Routes()
 	}
 }
