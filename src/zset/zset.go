@@ -162,13 +162,17 @@ func handleSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := 10000
+	limit := 15000
 	if l := r.URL.Query().Get("limit"); l != "" {
 		limit, _ = strconv.Atoi(l)
 	}
 
+	var redisQueryTime time.Duration
+
+	redisStartTime := time.Now()
 	// Kiểm tra Out of Sync (Lấy bản ghi cũ nhất trong ZSET)
 	oldestRecords, err := rdb.ZRange(ctx, ZSetName, 0, 0).Result()
+	redisQueryTime += time.Since(redisStartTime)
 	if err == nil && len(oldestRecords) > 0 {
 		// Bóc tách SID từ chuỗi member "000016777216327946:{"id..."}"
 		parts := strings.SplitN(oldestRecords[0], ":", 2)
@@ -185,9 +189,10 @@ func handleSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Thực hiện Range Query theo từ điển (Lexicographical) bằng ZRangeArgs
-	minLex := fmt.Sprintf("(%020d:", clientLastSFID) // '(' nghĩa là Lớn hơn
-	maxLex := "+"                                    // '+' nghĩa là phần tử lớn nhất
+	minLex := fmt.Sprintf("[%020d:", clientLastSFID+1) // '[' nghĩa là Lớn hơn hoặc bằng
+	maxLex := "+"                                      // '+' nghĩa là phần tử lớn nhất
 
+	redisStartTime = time.Now()
 	members, err := rdb.ZRangeArgs(ctx, redis.ZRangeArgs{
 		Key:    ZSetName,
 		ByLex:  true, // Bật chế độ quét theo Lexicographical (bảng chữ cái)
@@ -196,6 +201,7 @@ func handleSync(w http.ResponseWriter, r *http.Request) {
 		Offset: 0,            // Bắt đầu lấy từ phần tử đầu tiên thỏa mãn
 		Count:  int64(limit), // Giới hạn số lượng trả về (LIMIT)
 	}).Result()
+	redisQueryTime += time.Since(redisStartTime)
 
 	if err != nil && err != redis.Nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -218,9 +224,6 @@ func handleSync(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	elapsed := time.Since(apiStartTime).Milliseconds()
-	fmt.Printf("Elapsed Time: %d mili \n", elapsed)
-
 	// Nếu không có data nào trong khoảng (last_id -> safe_id)
 	if len(events) == 0 {
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -236,6 +239,10 @@ func handleSync(w http.ResponseWriter, r *http.Request) {
 		"next_last_id":   newLastID,
 		"events":         events,
 	})
+
+	apiDuration := time.Since(apiStartTime)
+	log.Printf("[SYNC API] last_id: %d | Records: %d | Redis Time: %v | Total API Time: %v",
+		clientLastSFID, len(events), redisQueryTime, apiDuration)
 }
 
 // --- API 4: Đo dung lượng RAM ---
