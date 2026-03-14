@@ -10,6 +10,7 @@ import (
 	"redis-stream-demo/src/config"
 	"redis-stream-demo/src/model"
 	redisclient "redis-stream-demo/src/pkg/redis"
+	"redis-stream-demo/src/pkg/util"
 	"strconv"
 	"strings"
 	"time"
@@ -49,16 +50,6 @@ func init() {
 	}
 }
 
-// --- Hàm Helper: Tạo chuỗi random cho trường "id" (giống format ES/Firestore) ---
-func randomString(n int) string {
-	var letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
-	s := make([]rune, n)
-	for i := range s {
-		s[i] = letters[rand.Intn(len(letters))]
-	}
-	return string(s)
-}
-
 // --- Hàm Helper: Sinh data mock sát với thực tế ---
 func generateData(count int) (uint64, error) {
 	pipe := rdb.Pipeline()
@@ -75,7 +66,7 @@ func generateData(count int) (uint64, error) {
 
 		// Tạo Mock Object khớp với JSON mẫu
 		logEntry := model.EventLog{
-			ID: randomString(20), // VD: 6QawtpwB-xMT8VeR6JaW
+			ID: util.RandomString(20), // randomString(20), // VD: 6QawtpwB-xMT8VeR6JaW
 			PhoneNumber: model.PhoneNumber{
 				Value:         fmt.Sprintf("+84%d", 900000000+rand.Intn(99999999)),
 				Carrier:       carriers[rand.Intn(len(carriers))],
@@ -122,26 +113,6 @@ func generateData(count int) (uint64, error) {
 	return lastSFID, nil
 }
 
-func handleInit(w http.ResponseWriter, r *http.Request) {
-	count := 150000
-	if c := r.URL.Query().Get("count"); c != "" {
-		count, _ = strconv.Atoi(c)
-	}
-
-	rdb.Del(ctx, StreamName) // Clear data cũ
-	lastID, err := generateData(count)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message": fmt.Sprintf("Đã khởi tạo thành công %d bản ghi", count),
-		"last_id": lastID,
-	})
-}
-
 func handleGenerate(w http.ResponseWriter, r *http.Request) {
 	count := 10
 	if c := r.URL.Query().Get("count"); c != "" {
@@ -162,6 +133,8 @@ func handleGenerate(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSync(w http.ResponseWriter, r *http.Request) {
+	apiStartTime := time.Now()
+
 	w.Header().Set("Content-Type", "application/json")
 	lastIDStr := r.URL.Query().Get("last_id")
 	if lastIDStr == "" {
@@ -175,12 +148,17 @@ func handleSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := 1000
+	limit := 15000
 	if l := r.URL.Query().Get("limit"); l != "" {
 		limit, _ = strconv.Atoi(l)
 	}
 
+	var redisQueryTime time.Duration
+
+	redisStartTime := time.Now()
+
 	streamInfo, err := rdb.XInfoStream(ctx, StreamName).Result()
+	redisQueryTime += time.Since(redisStartTime)
 	if err != nil && err != redis.Nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -191,6 +169,7 @@ func handleSync(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(oldestRedisID, "-")
 		oldestSFID, _ := strconv.ParseUint(parts[0], 10, 64)
 
+		// Kiểm tra Out of Sync (Lấy bản ghi cũ nhất trong Stream)
 		if clientLastSFID > 0 && clientLastSFID < oldestSFID {
 			w.WriteHeader(http.StatusGone) // HTTP 410
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -202,12 +181,14 @@ func handleSync(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	redisStartTime = time.Now()
 	clientRedisID := fmt.Sprintf("%d-0", clientLastSFID)
 	streams, err := rdb.XRead(ctx, &redis.XReadArgs{
 		Streams: []string{StreamName, clientRedisID},
 		Count:   int64(limit),
-		Block:   0,
+		Block:   -1, //  Không block đợi dữ liệu nếu dữ liệu đã là mới nhất
 	}).Result()
+	redisQueryTime += time.Since(redisStartTime)
 
 	if err == redis.Nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -241,6 +222,9 @@ func handleSync(w http.ResponseWriter, r *http.Request) {
 		"next_last_id":   newLastID,
 		"events":         events,
 	})
+	apiDuration := time.Since(apiStartTime)
+	log.Printf("[SYNC API] last_id: %d | Records: %d | Redis Time: %v | Total API Time: %v",
+		clientLastSFID, len(events), redisQueryTime, apiDuration)
 }
 
 func handleStats(w http.ResponseWriter, r *http.Request) {
@@ -284,11 +268,45 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// --- API 5: Cấp phát ID hợp lệ cho k6 Load Test (Phiên bản Stream) ---
+// Method: GET /api/test/setup
+func handleTestSetup(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	// Lấy 500 bản ghi cũ nhất nằm ở đầu Stream
+	// Dấu "-" đại diện cho ID nhỏ nhất, dấu "+" đại diện cho ID lớn nhất
+	messages, err := rdb.XRangeN(ctx, StreamName, "-", "+", 500).Result()
+	if err != nil && err != redis.Nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var validIDs []uint64
+	for _, msg := range messages {
+		// Trong Stream, ID được lưu dưới dạng "SonyflakeID-0" (VD: "116427239398554511-0")
+		// Ta tách chuỗi theo dấu "-" để lấy ID thực tế
+		parts := strings.Split(msg.ID, "-")
+		if len(parts) > 0 {
+			sfid, _ := strconv.ParseUint(parts[0], 10, 64)
+			validIDs = append(validIDs, sfid)
+		}
+	}
+
+	// Fallback an toàn phòng khi Stream đang trống
+	if len(validIDs) == 0 {
+		validIDs = append(validIDs, 0)
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"sids": validIDs,
+	})
+}
+
 func Routes() {
-	http.HandleFunc("/api/init", handleInit)
 	http.HandleFunc("/api/generate", handleGenerate)
 	http.HandleFunc("/api/sync", handleSync)
 	http.HandleFunc("/api/stats", handleStats)
+	http.HandleFunc("/api/test/setup", handleTestSetup)
 
 	fmt.Println("Server run at http://localhost:8081")
 	log.Fatal(http.ListenAndServe(":8081", nil))

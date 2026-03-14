@@ -10,6 +10,7 @@ import (
 	"redis-stream-demo/src/config"
 	"redis-stream-demo/src/model"
 	redisclient "redis-stream-demo/src/pkg/redis"
+	"redis-stream-demo/src/pkg/util"
 	"strconv"
 	"strings"
 	"time"
@@ -59,15 +60,6 @@ func init() {
 	}()
 }
 
-func randomString(n int) string {
-	var letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
-	s := make([]rune, n)
-	for i := range s {
-		s[i] = letters[rand.Intn(len(letters))]
-	}
-	return string(s)
-}
-
 // --- Hàm Helper sinh data ---
 func generateData(count int) (uint64, error) {
 	pipe := rdb.Pipeline()
@@ -82,7 +74,7 @@ func generateData(count int) (uint64, error) {
 		lastSFID = id
 
 		logEntry := model.EventLog{
-			ID: randomString(20),
+			ID: util.RandomString(20), // randomString(20),
 			PhoneNumber: model.PhoneNumber{
 				Value:         fmt.Sprintf("+84%d", 900000000+rand.Intn(99999999)),
 				Carrier:       carriers[rand.Intn(len(carriers))],
@@ -124,20 +116,6 @@ func generateData(count int) (uint64, error) {
 	return lastSFID, nil
 }
 
-func handleInit(w http.ResponseWriter, r *http.Request) {
-	count := 150000
-	if c := r.URL.Query().Get("count"); c != "" {
-		count, _ = strconv.Atoi(c)
-	}
-	rdb.Del(ctx, ZSetName)
-	lastID, err := generateData(count)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"message": "Init success", "last_id": lastID})
-}
-
 func handleGenerate(w http.ResponseWriter, r *http.Request) {
 	count := 10
 	if c := r.URL.Query().Get("count"); c != "" {
@@ -153,6 +131,7 @@ func handleGenerate(w http.ResponseWriter, r *http.Request) {
 
 func handleSync(w http.ResponseWriter, r *http.Request) {
 	apiStartTime := time.Now()
+
 	w.Header().Set("Content-Type", "application/json")
 	lastIDStr := r.URL.Query().Get("last_id")
 
@@ -284,7 +263,6 @@ func handleTestSetup(w http.ResponseWriter, r *http.Request) {
 }
 
 func Routes() {
-	http.HandleFunc("/api/init", handleInit)
 	http.HandleFunc("/api/generate", handleGenerate)
 	http.HandleFunc("/api/sync", handleSync)
 	http.HandleFunc("/api/stats", handleStats)

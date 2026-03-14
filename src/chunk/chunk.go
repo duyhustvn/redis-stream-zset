@@ -10,6 +10,7 @@ import (
 	"redis-stream-demo/src/config"
 	"redis-stream-demo/src/model"
 	redisclient "redis-stream-demo/src/pkg/redis"
+	"redis-stream-demo/src/pkg/util"
 	"strconv"
 	"strings"
 	"time"
@@ -37,16 +38,6 @@ var (
 	actions    = []string{"ADD", "UPDATE", "DELETE"}
 )
 
-// Hàm random string
-func randomString(n int) string {
-	var letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
-	b := make([]rune, n)
-	for i := range b {
-		b[i] = letters[rand.Intn(len(letters))]
-	}
-	return string(b)
-}
-
 func init() {
 	cfg, err := config.LoadConfig()
 	if err != nil {
@@ -73,7 +64,7 @@ func Routes() {
 	http.HandleFunc("/api/generate", generateHandler)
 	http.HandleFunc("/api/sync", syncHandler)
 
-	fmt.Println("Server đang chạy tại http://localhost:8081")
+	fmt.Println("Server đang chạy tại http://:8081")
 	log.Fatal(http.ListenAndServe(":8081", nil))
 }
 
@@ -89,7 +80,7 @@ func generateHandler(w http.ResponseWriter, r *http.Request) {
 	for i := 0; i < count; i++ {
 		sid, _ := sf.NextID()
 		logEntry := model.EventLog{
-			ID: randomString(20),
+			ID: util.RandomString(20), // randomString(20),
 			PhoneNumber: model.PhoneNumber{
 				Value:         fmt.Sprintf("+84%d", 900000000+rand.Intn(99999999)),
 				Carrier:       carriers[rand.Intn(len(carriers))],
