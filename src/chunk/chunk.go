@@ -271,3 +271,33 @@ func syncHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[SYNC API] last_id: %d | Records: %d | Redis Time: %v | Total API Time: %v",
 		lastID, response.Count, redisQueryTime, apiDuration)
 }
+
+// --- API 3: Cấp phát ID hợp lệ cho k6 Load Test ---
+// Method: GET /api/test/setup
+func handleTestSetup(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	// Lấy 500 bản ghi cũ nhất (nằm ở đáy ZSET) của ActiveEvents
+	// Lệnh ZRange mặc định lấy theo index (từ 0 đến 500), kết hợp với Score=0 nó sẽ tự lấy theo ZLEX cực chuẩn
+	members, err := rdb.ZRange(ctx, ActiveEvents, 0, 500).Result()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// DÙNG MẢNG STRING ĐỂ TRÁNH LỖI 53-BIT TRÊN K6 (JS ENGINE)
+	validIDs := []string{"0"} // Luôn khởi tạo với "0" cho kịch bản New User
+
+	for _, member := range members {
+		parts := strings.SplitN(member, ":", 2)
+		if len(parts) > 0 {
+			// Ép qua uint64 rồi format lại string để loại bỏ các số "0" dư thừa ở đầu (zero-padding)
+			sfid, _ := strconv.ParseUint(parts[0], 10, 64)
+			validIDs = append(validIDs, strconv.FormatUint(sfid, 10))
+		}
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"sids": validIDs,
+	})
+}

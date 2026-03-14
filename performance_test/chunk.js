@@ -1,5 +1,6 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
+import { randomItem } from './k6-utils.js';
 
 export let options = {
     stages: [
@@ -12,35 +13,50 @@ export let options = {
 const baseUrl = `http://localhost:8081`;
 
 // Hàm setup() giữ nguyên như cũ để sinh mảng dynamicIds
-export function setup() {
-    let res = http.get(`${baseUrl}/api/sync?last_id=0`);
-    let ids = ["0"];
+// export function setup() {
+//     let res = http.get(`${baseUrl}/api/sync?last_id=0`);
+//     let ids = ["0"];
 
+//     if (res.status === 200) {
+//         let body = JSON.parse(res.body);
+//         let events = body.data;
+//         if (events.length > 0) {
+//             ids.push(events[Math.floor(events.length / 4)].sid.toString());
+//             ids.push(events[Math.floor(events.length / 2)].sid.toString());
+//             ids.push(events[events.length - 1].sid.toString());
+//         }
+//     }
+//     let lastIdNum = BigInt(ids[ids.length - 1]);
+//     ids.push((lastIdNum + 15000n).toString());
+//     return ids;
+// }
+
+export function setup() {
+    let res = http.get(`${baseUrl}/api/test/setup`);
+    let valid_sids = [];
+    
     if (res.status === 200) {
-        let body = JSON.parse(res.body);
-        let events = body.data;
-        if (events.length > 0) {
-            ids.push(events[Math.floor(events.length / 4)].sid.toString());
-            ids.push(events[Math.floor(events.length / 2)].sid.toString());
-            ids.push(events[events.length - 1].sid.toString());
+        try {
+            let body = JSON.parse(res.body);
+            if (body.sids && body.sids.length > 0) {
+                valid_sids = body.sids;
+            }
+        } catch (e) {
+            console.error("[Setup Error] Lỗi parse JSON:", e);
         }
     }
     
-    let lastIdNum = BigInt(ids[ids.length - 1]);
-    ids.push((lastIdNum + 10000n).toString());
-    
-    return ids; 
+    if (valid_sids.length === 0) valid_sids = ["0"];
+    return { sids: valid_sids };
 }
 
 // Hàm default được chạy bởi từng VU
-export default function (dynamicIds) {
-    // Chọn ngẫu nhiên 1 last_id làm điểm bắt đầu cho phiên đồng bộ này
-    let randomIndex = Math.floor(Math.random() * dynamicIds.length);
-    let currentLastId = dynamicIds[randomIndex];
+export default function (data) {
+    let current_last_id = randomItem(data.sids);
 
     // Lặp 10 lần để lấy cuốn chiếu (tối đa 10 x 15.000 = 150.000 bản ghi)
     for (let i = 0; i < 10; i++) {
-        let res = http.get(`${baseUrl}/api/sync?last_id=${currentLastId}`);
+        let res = http.get(`${baseUrl}/api/sync?last_id=${current_last_id}`);
 
         // K6 check HTTP status
         let success = check(res, {
