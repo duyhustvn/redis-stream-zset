@@ -203,7 +203,7 @@ func syncHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Đo thời gian query Registry
 	redisStartTime := time.Now()
-	chunks, _ := rdb.ZRangeArgs(ctx, redis.ZRangeArgs{
+	chunks, err := rdb.ZRangeArgs(ctx, redis.ZRangeArgs{
 		Key:    ChunkRegistry,
 		Start:  minLex,
 		Stop:   "+",
@@ -212,6 +212,9 @@ func syncHandler(w http.ResponseWriter, r *http.Request) {
 		Count:  1,
 	}).Result()
 	redisQueryTime += time.Since(redisStartTime)
+	if err != nil {
+		log.Printf("Query Registry Redis failed: %+v", err)
+	}
 
 	if len(chunks) > 0 {
 		parts := strings.SplitN(chunks[0], ":", 2)
@@ -219,8 +222,11 @@ func syncHandler(w http.ResponseWriter, r *http.Request) {
 
 		// Đo thêm thời gian GET dữ liệu chunk từ Redis
 		getChunkStartTime := time.Now()
-		chunkData, _ := rdb.Get(ctx, chunkKey).Result()
+		chunkData, err := rdb.Get(ctx, chunkKey).Result()
 		redisQueryTime += time.Since(getChunkStartTime)
+		if err != nil {
+			log.Printf("Query Chunk Redis failed: %+v", err)
+		}
 
 		var allEvents []model.EventLog
 		json.Unmarshal([]byte(chunkData), &allEvents)
@@ -233,7 +239,7 @@ func syncHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// NẾU KHÔNG CÓ TRONG REGISTRY -> TÌM TRONG ACTIVE EVENTS
 		activeStartTime := time.Now()
-		activeEventsStr, _ := rdb.ZRangeArgs(ctx, redis.ZRangeArgs{
+		activeEventsStr, err := rdb.ZRangeArgs(ctx, redis.ZRangeArgs{
 			Key:    ActiveEvents,
 			Start:  minLex,
 			Stop:   "+",
@@ -242,6 +248,9 @@ func syncHandler(w http.ResponseWriter, r *http.Request) {
 			Count:  int64(ChunkSize), // go-redis yêu cầu int64 cho Count
 		}).Result()
 		redisQueryTime += time.Since(activeStartTime)
+		if err != nil {
+			log.Printf("Query Acive Events Redis failed: %+v", err)
+		}
 
 		for _, evStr := range activeEventsStr {
 			parts := strings.SplitN(evStr, ":", 2)
