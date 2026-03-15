@@ -82,7 +82,7 @@ export default function (data) {
             // Dữ liệu từ Redis trả về đã được sort theo SID tăng dần.
             // Do đó, bản ghi cuối cùng trong mảng sẽ chứa SID lớn nhất.
             // Ta lấy SID này làm last_id cho vòng lặp tiếp theo.
-            currentLastId = body[body.length - 1].sid;
+            current_last_id = body[body.length - 1].sid;
 
         } catch (e) {
             console.error("Lỗi parse JSON:", e);
