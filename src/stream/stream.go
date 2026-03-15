@@ -160,6 +160,7 @@ func handleSync(w http.ResponseWriter, r *http.Request) {
 	streamInfo, err := rdb.XInfoStream(ctx, StreamName).Result()
 	redisQueryTime += time.Since(redisStartTime)
 	if err != nil && err != redis.Nil {
+		log.Printf("Query Stream Redis Info failed: %+v\n", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -197,6 +198,7 @@ func handleSync(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	} else if err != nil {
+		log.Printf("Query Stream Redis failed: %+v\n", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

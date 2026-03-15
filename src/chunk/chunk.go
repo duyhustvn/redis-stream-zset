@@ -214,6 +214,8 @@ func syncHandler(w http.ResponseWriter, r *http.Request) {
 	redisQueryTime += time.Since(redisStartTime)
 	if err != nil {
 		log.Printf("Query Registry Redis failed: %+v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	if len(chunks) > 0 {
@@ -226,6 +228,8 @@ func syncHandler(w http.ResponseWriter, r *http.Request) {
 		redisQueryTime += time.Since(getChunkStartTime)
 		if err != nil {
 			log.Printf("Query Chunk Redis failed: %+v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 
 		var allEvents []model.EventLog
@@ -250,6 +254,8 @@ func syncHandler(w http.ResponseWriter, r *http.Request) {
 		redisQueryTime += time.Since(activeStartTime)
 		if err != nil {
 			log.Printf("Query Acive Events Redis failed: %+v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 
 		for _, evStr := range activeEventsStr {

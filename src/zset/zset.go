@@ -152,6 +152,11 @@ func handleSync(w http.ResponseWriter, r *http.Request) {
 	// Kiểm tra Out of Sync (Lấy bản ghi cũ nhất trong ZSET)
 	oldestRecords, err := rdb.ZRange(ctx, ZSetName, 0, 0).Result()
 	redisQueryTime += time.Since(redisStartTime)
+	if err != nil && err != redis.Nil {
+		log.Printf("Query ZSET Redis first element failed: %+v\n", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	if err == nil && len(oldestRecords) > 0 {
 		// Bóc tách SID từ chuỗi member "000016777216327946:{"id..."}"
 		parts := strings.SplitN(oldestRecords[0], ":", 2)
@@ -183,6 +188,7 @@ func handleSync(w http.ResponseWriter, r *http.Request) {
 	redisQueryTime += time.Since(redisStartTime)
 
 	if err != nil && err != redis.Nil {
+		log.Printf("Query ZSET Redis failed: %+v\n", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
