@@ -63,6 +63,7 @@ func Routes() {
 
 	http.HandleFunc("/api/generate", generateHandler)
 	http.HandleFunc("/api/sync", syncHandler)
+	http.HandleFunc("/api/stats", handleStats)
 
 	fmt.Println("Server đang chạy tại http://:8081")
 	log.Fatal(http.ListenAndServe(":8081", nil))
@@ -315,4 +316,73 @@ func handleTestSetup(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"sids": validIDs,
 	})
+}
+
+// --- API 4: Thống kê toàn diện hệ thống (Records & RAM) ---
+// Method: GET /api/stats
+func handleStats(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	// Helper function để format Byte sang Megabyte cho dễ nhìn
+	toMB := func(bytes int64) string {
+		return fmt.Sprintf("%.2f MB", float64(bytes)/(1024*1024))
+	}
+
+	// 1. Quét nhánh Active Events
+	activeRecords, _ := rdb.ZCard(ctx, ActiveEvents).Result()
+	activeMem, _ := rdb.MemoryUsage(ctx, ActiveEvents).Result()
+
+	// 2. Quét nhánh Chunk Registry (Sổ đăng ký)
+	registryChunks, _ := rdb.ZCard(ctx, ChunkRegistry).Result()
+	registryMem, _ := rdb.MemoryUsage(ctx, ChunkRegistry).Result()
+
+	// 3. Quét chi tiết dung lượng của từng Chunk Data
+	var chunksMem int64
+	members, _ := rdb.ZRange(ctx, ChunkRegistry, 0, -1).Result()
+
+	for _, member := range members {
+		parts := strings.SplitN(member, ":", 2)
+		if len(parts) == 2 {
+			chunkKey := parts[1]
+			// Đo dung lượng của từng Key chứa JSON String
+			mem, err := rdb.MemoryUsage(ctx, chunkKey).Result()
+			// Bỏ qua lỗi nếu Key đã bị Redis xoá do hết hạn (TTL)
+			if err == nil {
+				chunksMem += mem
+			}
+		}
+	}
+
+	// Số bản ghi trong Chunk = Số lượng chunk * 15.000
+	chunksRecords := registryChunks * int64(ChunkSize)
+
+	// 4. Tổng hợp toàn hệ thống
+	totalRecords := activeRecords + chunksRecords
+	totalMem := activeMem + registryMem + chunksMem
+
+	// 5. Trả về JSON Report
+	response := map[string]interface{}{
+		"active_events": map[string]interface{}{
+			"records":      activeRecords,
+			"memory_bytes": activeMem,
+			"memory_mb":    toMB(activeMem),
+		},
+		"chunk_registry": map[string]interface{}{
+			"chunks":       registryChunks,
+			"memory_bytes": registryMem,
+			"memory_mb":    toMB(registryMem),
+		},
+		"chunks_data": map[string]interface{}{
+			"records":      chunksRecords,
+			"memory_bytes": chunksMem,
+			"memory_mb":    toMB(chunksMem),
+		},
+		"system_total": map[string]interface{}{
+			"total_records":      totalRecords,
+			"total_memory_bytes": totalMem,
+			"total_memory_mb":    toMB(totalMem),
+		},
+	}
+
+	json.NewEncoder(w).Encode(response)
 }

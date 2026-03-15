@@ -2,12 +2,20 @@ import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { randomItem } from './k6-utils.js';
 
-export let options = {
-    stages: [
-        { duration: '5s', target: 100 },  // Ramp-up 100 user
-        { duration: '30s', target: 500 }, // Giữ 500 user
-        { duration: '5s', target: 0 },    // Ramp-down
-    ],
+export const options = {
+  stages: [
+    { duration: '20s', target: 100 }, // Step 1: Ramp to 100 VUs
+    { duration: '30s', target: 100 }, // Hold at 100 VUs (Observe baseline)
+    { duration: '20s', target: 300 }, // Step 2: Ramp to 300 VUs
+    { duration: '30s', target: 300 }, // Hold at 300 VUs (Does latency spike here?)
+    { duration: '20s', target: 500 }, // Step 3: Ramp to 500 VUs
+    { duration: '30s', target: 500 }, // Hold at 500 VUs (Peak load)
+    { duration: '20s', target: 0 },   // Graceful scale down
+  ],
+//   thresholds: {
+//     // This will fail the test if 95% of requests take longer than 3 seconds
+//     http_req_duration: ['p(95)<3000'], 
+//   },
 };
 
 const baseUrl = `http://localhost:8081`;
