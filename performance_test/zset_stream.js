@@ -42,7 +42,7 @@ export function setup() {
 
 export default function (data) {
     let current_last_id = randomItem(data.sids);
-    let limit = 1500;
+    let limit = 15000;
 
     for (let i = 0; i < 10; i++) {
         let url = `${baseUrl}/api/sync?last_id=${current_last_id}&limit=${limit}`;
@@ -56,7 +56,6 @@ export default function (data) {
         if (!is200) {
             // IN LỖI VÀ BỎ QUA LƯỢT NÀY (Thử lại ở vòng lặp tiếp theo với cùng ID)
             console.log(`[HTTP Error] VU: ${__VU}, Iter: ${i}, Status: ${res.status}, Body: ${res.body}`);
-            sleep(0.2);
             continue; 
         }
 
@@ -67,7 +66,6 @@ export default function (data) {
         } catch (e) {
             // IN LỖI PARSE VÀ BỎ QUA
             console.log(`[JSON Error] VU: ${__VU}, Status: ${res.status}, Body: ${res.body}`);
-            sleep(0.2);
             continue;
         }
         

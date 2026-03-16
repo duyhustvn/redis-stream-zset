@@ -73,7 +73,7 @@ export default function (data) {
 
         // Nếu request lỗi (như server quá tải trả về 500), thoát vòng lặp ngay
         if (!success) {
-            break; 
+            continue;
         }
 
         try {
@@ -94,15 +94,11 @@ export default function (data) {
 
         } catch (e) {
             console.error("Lỗi parse JSON:", e);
-            break;
+            continue;
         }
-
-        // Nghỉ khoảng 200ms - 500ms giữa các lần gọi chunk.
-        // Giả lập thời gian client (mobile) parse JSON và insert vào SQLite/Realm nội bộ.
-        sleep(Math.random() * 0.3 + 0.2); 
     }
 
     // Sau khi kết thúc 1 phiên đồng bộ lớn (lấy xong 150k data hoặc đồng bộ xong), 
     // User nghỉ ngơi 1-3 giây trước khi k6 bắt đầu iteration mới.
-    sleep(Math.random() * 2 + 1); 
+    sleep(0.2); 
 }

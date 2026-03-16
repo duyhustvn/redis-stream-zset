@@ -64,6 +64,7 @@ func Routes() {
 	http.HandleFunc("/api/generate", generateHandler)
 	http.HandleFunc("/api/sync", syncHandler)
 	http.HandleFunc("/api/stats", handleStats)
+	http.HandleFunc("/api/test/setup", handleTestSetup)
 
 	fmt.Println("Server đang chạy tại http://:8081")
 	log.Fatal(http.ListenAndServe(":8081", nil))
@@ -259,14 +260,34 @@ func syncHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Khai báo kiểu RawMessage để Go bỏ qua bước Unmarshal/Marshal tốn kém
+		var active []json.RawMessage
 		for _, evStr := range activeEventsStr {
 			parts := strings.SplitN(evStr, ":", 2)
 			if len(parts) == 2 {
-				var ev model.EventLog
-				json.Unmarshal([]byte(parts[1]), &ev)
-				resultEvents = append(resultEvents, ev)
+				// var ev model.EventLog
+				// json.Unmarshal([]byte(parts[1]), &ev)
+				// resultEvents = append(resultEvents, ev)
+
+				// Member: 00116650985607593988:{"id":"PjZcrDKFhpUBNcmUXnXU","phoneNumber":{"value":"+84942810879","carrier":"Mobifone","category":"TELEMARKETING","risk_level":100,"meta":{"subCategory":"spam"},"user_risk_score":12},"type":"UPDATE","createdTime":1773596605,"sid":116650985607593988}
+				// parts[1] chính là chuỗi '{"id":"...","phoneNumber":{...},...}'
+				// Ép kiểu nó sang RawMessage và nhét thẳng vào mảng kết quả
+				active = append(active, json.RawMessage(parts[1]))
 			}
 		}
+
+		// Tạo Response động vì kiểu dữ liệu data giờ là []json.RawMessage
+		response := map[string]interface{}{
+			"count": len(active),
+			"data":  active,
+		}
+
+		json.NewEncoder(w).Encode(response)
+
+		apiDuration := time.Since(apiStartTime)
+		log.Printf("[SYNC API - ACTIVE] last_id: %d | Records: %d | Redis Time: %v | Total API Time: %v",
+			lastID, len(active), redisQueryTime, apiDuration)
+		return
 	}
 
 	// Tránh trả về null nếu không có dữ liệu, khởi tạo mảng rỗng
@@ -303,6 +324,7 @@ func handleTestSetup(w http.ResponseWriter, r *http.Request) {
 
 	// DÙNG MẢNG STRING ĐỂ TRÁNH LỖI 53-BIT TRÊN K6 (JS ENGINE)
 	validIDs := []string{"0"} // Luôn khởi tạo với "0" cho kịch bản New User
+	// validIDs := []string{} // Luôn khởi tạo với "0" cho kịch bản New User
 
 	for _, member := range members {
 		parts := strings.SplitN(member, ":", 2)

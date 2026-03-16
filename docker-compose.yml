@@ -6,7 +6,7 @@ services:
       - 8081:8081
     environment:
       REDIS_ADDRESS: "redis:6379"
-      SERVER_MODE: "chunk"
+      SERVER_MODE: "stream" 
 
   redis:
     image: redis:8
