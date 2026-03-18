@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"math/rand"
 	"net/http"
 	"redis-stream-demo/src/config"
 	"redis-stream-demo/src/model"
@@ -55,30 +54,11 @@ func generateData(count int) (uint64, error) {
 	pipe := rdb.Pipeline()
 	var lastSFID uint64
 
-	carriers := []string{"Viettel", "Mobifone", "Vinaphone", "Việt Nam"}
-	categories := []string{"scam", "spam", "suspectSpam", "suspectScam"}
-	actions := []string{"update", "add"}
-
-	for i := 1; i <= count; i++ {
-		id, _ := sf.NextID()
+	logsEntry := util.GenerateData(sf, count)
+	for i, logEntry := range logsEntry {
+		id := logEntry.SID
 		lastSFID = id
 		redisID := fmt.Sprintf("%d-0", id)
-
-		// Tạo Mock Object khớp với JSON mẫu
-		logEntry := model.EventLog{
-			ID: util.RandomString(20), // randomString(20), // VD: 6QawtpwB-xMT8VeR6JaW
-			PhoneNumber: model.PhoneNumber{
-				Value:         fmt.Sprintf("+84%d", 900000000+rand.Intn(99999999)),
-				Carrier:       carriers[rand.Intn(len(carriers))],
-				Category:      categories[rand.Intn(len(categories))],
-				RiskLevel:     100,
-				Meta:          model.Meta{SubCategory: "spam"},
-				UserRiskScore: rand.Intn(100),
-			},
-			Type:        actions[rand.Intn(len(actions))],
-			CreatedTime: time.Now().Unix(),
-			SID:         id, // Gán Sonyflake ID vào trường sid
-		}
 
 		// Convert Object thành JSON String để lưu vào Redis
 		jsonBytes, _ := json.Marshal(logEntry)

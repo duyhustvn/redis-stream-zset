@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"math/rand"
 	"net/http"
 	"redis-stream-demo/src/config"
 	"redis-stream-demo/src/model"
@@ -65,34 +64,15 @@ func generateData(count int) (uint64, error) {
 	pipe := rdb.Pipeline()
 	var lastSFID uint64
 
-	carriers := []string{"Viettel", "Mobifone", "Vinaphone", "Việt Nam"}
-	categories := []string{"scam", "spam", "suspectSpam"}
-	actions := []string{"update", "add"}
+	logsEntry := util.GenerateData(sf, count)
 
-	for i := 1; i <= count; i++ {
-		id, _ := sf.NextID()
-		lastSFID = id
-
-		logEntry := model.EventLog{
-			ID: util.RandomString(20), // randomString(20),
-			PhoneNumber: model.PhoneNumber{
-				Value:         fmt.Sprintf("+84%d", 900000000+rand.Intn(99999999)),
-				Carrier:       carriers[rand.Intn(len(carriers))],
-				Category:      categories[rand.Intn(len(categories))],
-				RiskLevel:     100,
-				Meta:          model.Meta{SubCategory: "spam"},
-				UserRiskScore: rand.Intn(100),
-			},
-			Type:        actions[rand.Intn(len(actions))],
-			CreatedTime: time.Now().Unix(),
-			SID:         id,
-		}
-
+	for i, logEntry := range logsEntry {
+		lastSFID = logEntry.SID
 		jsonBytes, _ := json.Marshal(logEntry)
 
 		// KỸ THUẬT LEXICOGRAPHICAL: Format SID thành chuỗi 20 ký tự số (Padding 0 ở đầu)
 		// Ví dụ: "000016777216327946:{"id":"..."}"
-		memberStr := fmt.Sprintf("%020d:%s", id, string(jsonBytes))
+		memberStr := fmt.Sprintf("%020d:%s", logEntry.SID, string(jsonBytes))
 
 		pipe.ZAdd(ctx, ZSetName, redis.Z{
 			Score:  0, // Tất cả score = 0, ép Redis sắp xếp theo chữ cái của memberStr

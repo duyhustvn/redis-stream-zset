@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"math/rand"
 	"net/http"
 	"redis-stream-demo/src/config"
 	"redis-stream-demo/src/model"
@@ -79,28 +78,13 @@ func generateHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for i := 0; i < count; i++ {
-		sid, _ := sf.NextID()
-		logEntry := model.EventLog{
-			ID: util.RandomString(20), // randomString(20),
-			PhoneNumber: model.PhoneNumber{
-				Value:         fmt.Sprintf("+84%d", 900000000+rand.Intn(99999999)),
-				Carrier:       carriers[rand.Intn(len(carriers))],
-				Category:      categories[rand.Intn(len(categories))],
-				RiskLevel:     100,
-				Meta:          model.Meta{SubCategory: "spam"},
-				UserRiskScore: rand.Intn(100),
-			},
-			Type:        actions[rand.Intn(len(actions))],
-			CreatedTime: time.Now().Unix(),
-			SID:         sid,
-		}
-
+	logsEntry := util.GenerateData(sf, count)
+	for _, logEntry := range logsEntry {
 		eventJSON, _ := json.Marshal(logEntry)
 
 		// FORMAT ZLEX: Ghép SID (20 số zero-padding) vào trước data
 		// Ví dụ: "00000123456789012345:{"id":"..."}"
-		member := fmt.Sprintf("%020d:%s", sid, eventJSON)
+		member := fmt.Sprintf("%020d:%s", logEntry.SID, eventJSON)
 
 		rdb.ZAdd(ctx, ActiveEvents, redis.Z{
 			Score:  0, // Tất cả Score = 0 để ép Redis sort theo Member (ZLEX)
