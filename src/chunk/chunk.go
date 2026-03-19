@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"redis-stream-demo/src/config"
+	"redis-stream-demo/src/middleware"
 	"redis-stream-demo/src/model"
 	redisclient "redis-stream-demo/src/pkg/redis"
 	"redis-stream-demo/src/pkg/util"
@@ -61,7 +62,7 @@ func Routes() {
 	go chunkPackerWorker()
 
 	http.HandleFunc("/api/generate", generateHandler)
-	http.HandleFunc("/api/sync", syncHandler)
+	http.HandleFunc("/api/sync", middleware.GzipMiddleware(syncHandler))
 	http.HandleFunc("/api/stats", handleStats)
 	http.HandleFunc("/api/test/setup", handleTestSetup)
 
