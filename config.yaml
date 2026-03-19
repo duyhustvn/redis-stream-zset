@@ -3,6 +3,7 @@ redis:
   address: "localhost:6379"
   password: "changeme"
   master_name: ""
+  enable_gzip: true
 
 server:
   port: 8081

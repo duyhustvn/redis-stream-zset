@@ -1,9 +1,12 @@
 package combine
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"redis-stream-demo/src/config"
@@ -20,13 +23,15 @@ import (
 )
 
 // Cấu hình Redis & Constants
+
 const (
-	ChunkSize     = 15000
-	AppPrefix     = "event"
-	ActiveEvents  = AppPrefix + ":active_events"
-	ChunkRegistry = AppPrefix + ":chunk_registry"
-	PackLockKey   = AppPrefix + "lock:pack_chunk"
+	ChunkSize = 15000
 )
+
+var AppPrefix string
+var ActiveEvents string
+var ChunkRegistry string
+var PackLockKey string
 
 var (
 	rdb        *redis.Client
@@ -44,6 +49,17 @@ func init() {
 		log.Fatalf("Cannot load env: %+v", err)
 	}
 
+	if cfg.RedisConfig.EnableGzip {
+		AppPrefix = "event_gzip"
+	} else {
+		AppPrefix = "event"
+
+	}
+
+	ActiveEvents = AppPrefix + ":active_events"
+	ChunkRegistry = AppPrefix + ":chunk_registry"
+	PackLockKey = AppPrefix + "lock:pack_chunk"
+
 	rdb, err = redisclient.NewRedisClient(cfg.RedisConfig)
 	if err != nil {
 		log.Fatalf("Failed to init redis client: %+v", err)
@@ -58,20 +74,34 @@ func init() {
 	}
 }
 
-func Routes() {
-	go chunkPackerWorker()
+type handler struct {
+	config *config.Config
+}
 
-	http.HandleFunc("/api/generate", generateHandler)
-	http.HandleFunc("/api/sync", middleware.GzipMiddleware(syncHandler))
-	http.HandleFunc("/api/stats", handleStats)
-	http.HandleFunc("/api/test/setup", handleTestSetup)
+func NewHandler(cfg *config.Config) *handler {
+	if cfg.RedisConfig.EnableGzip {
+
+	}
+
+	return &handler{
+		config: cfg,
+	}
+}
+
+func (inst *handler) Routes() {
+	go chunkPackerWorker(*inst.config)
+
+	http.HandleFunc("/api/generate", inst.generateHandler)
+	http.HandleFunc("/api/sync", middleware.GzipMiddleware(inst.syncHandler))
+	http.HandleFunc("/api/stats", inst.handleStats)
+	http.HandleFunc("/api/test/setup", inst.handleTestSetup)
 
 	fmt.Println("Server đang chạy tại http://:8081")
 	log.Fatal(http.ListenAndServe(":8081", nil))
 }
 
 // --- API 1: Generate Data ---
-func generateHandler(w http.ResponseWriter, r *http.Request) {
+func (inst *handler) generateHandler(w http.ResponseWriter, r *http.Request) {
 	countStr := r.URL.Query().Get("count")
 	count, err := strconv.Atoi(countStr)
 	if err != nil || count <= 0 {
@@ -103,13 +133,13 @@ func generateHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- LUỒNG WORKER ĐÓNG GÓI ---
-func chunkPackerWorker() {
+func chunkPackerWorker(cfg config.Config) {
 	for range packSignal {
-		packChunkIfNeeded()
+		packChunkIfNeeded(cfg)
 	}
 }
 
-func packChunkIfNeeded() {
+func packChunkIfNeeded(cfg config.Config) {
 	locked, err := rdb.SetNX(ctx, PackLockKey, "1", 30*time.Second).Result()
 	if err != nil || !locked {
 		return // Không lấy được lock, bỏ qua
@@ -147,7 +177,18 @@ func packChunkIfNeeded() {
 		// Tạo tên chunk và lưu JSON
 		chunkKey := fmt.Sprintf("%s:chunk:%d", AppPrefix, maxSID)
 		chunkJSON, _ := json.Marshal(events)
-		rdb.Set(ctx, chunkKey, chunkJSON, 7*24*time.Hour) // Sống 7 ngày trên RAM
+
+		if cfg.RedisConfig.EnableGzip {
+			// Gzip data before save into redis
+			var b bytes.Buffer
+			gz := gzip.NewWriter(&b)
+			gz.Write(chunkJSON)
+			gz.Close() // flush data
+
+			rdb.Set(ctx, chunkKey, b.Bytes(), 7*24*time.Hour)
+		} else {
+			rdb.Set(ctx, chunkKey, chunkJSON, 7*24*time.Hour)
+		}
 
 		// Lưu Registry: Đưa SID lên đầu để dùng ZLEX
 		registryMember := fmt.Sprintf("%020d:%s", maxSID, chunkKey)
@@ -170,7 +211,7 @@ type SyncResponse struct {
 }
 
 // --- API 2: Lấy dữ liệu (Đồng bộ) ---
-func syncHandler(w http.ResponseWriter, r *http.Request) {
+func (inst *handler) syncHandler(w http.ResponseWriter, r *http.Request) {
 	// 1. Đánh dấu thời điểm bắt đầu API
 	apiStartTime := time.Now()
 
@@ -209,18 +250,33 @@ func syncHandler(w http.ResponseWriter, r *http.Request) {
 		parts := strings.SplitN(chunks[0], ":", 2)
 		chunkKey := parts[1]
 
+		var allEvents []model.EventLog
 		// Đo thêm thời gian GET dữ liệu chunk từ Redis
 		getChunkStartTime := time.Now()
-		chunkData, err := rdb.Get(ctx, chunkKey).Result()
-		redisQueryTime += time.Since(getChunkStartTime)
-		if err != nil {
-			log.Printf("Query Chunk Redis failed: %+v", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+		if inst.config.RedisConfig.EnableGzip {
+			chunkDataCompressed, err := rdb.Get(ctx, chunkKey).Bytes()
+			redisQueryTime += time.Since(getChunkStartTime)
+			if err != nil {
+				log.Printf("Query Chunk Redis failed: %+v", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 
-		var allEvents []model.EventLog
-		json.Unmarshal([]byte(chunkData), &allEvents)
+			gr, _ := gzip.NewReader(bytes.NewReader(chunkDataCompressed))
+			uncompressedJSON, _ := io.ReadAll(gr)
+			gr.Close()
+
+			json.Unmarshal(uncompressedJSON, &allEvents)
+		} else {
+			chunkData, err := rdb.Get(ctx, chunkKey).Result()
+			redisQueryTime += time.Since(getChunkStartTime)
+			if err != nil {
+				log.Printf("Query Chunk Redis failed: %+v", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			json.Unmarshal([]byte(chunkData), &allEvents)
+		}
 
 		for _, ev := range allEvents {
 			if ev.SID > lastID {
@@ -296,7 +352,7 @@ func syncHandler(w http.ResponseWriter, r *http.Request) {
 
 // --- API 3: Cấp phát ID hợp lệ cho k6 Load Test ---
 // Method: GET /api/test/setup
-func handleTestSetup(w http.ResponseWriter, r *http.Request) {
+func (inst *handler) handleTestSetup(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	// Lấy 500 bản ghi cũ nhất (nằm ở đáy ZSET) của ActiveEvents
@@ -327,7 +383,7 @@ func handleTestSetup(w http.ResponseWriter, r *http.Request) {
 
 // --- API 4: Thống kê toàn diện hệ thống (Records & RAM) ---
 // Method: GET /api/stats
-func handleStats(w http.ResponseWriter, r *http.Request) {
+func (inst *handler) handleStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	// Helper function để format Byte sang Megabyte cho dễ nhìn

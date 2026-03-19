@@ -5,6 +5,7 @@ type RedisConfig struct {
 	Password   string `mapstructure:"password"`
 	Mode       string `mapstructure:"mode"`
 	MasterName string `mapstructure:"master_name"`
+	EnableGzip bool   `mapstructure:"enable_gzip"`
 }
 
 type ServerConfig struct {

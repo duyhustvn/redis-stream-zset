@@ -7,6 +7,7 @@ services:
     environment:
       REDIS_ADDRESS: "redis:6379"
       SERVER_MODE: "chunk" 
+      ENABLE_GZIP: true
 
   redis:
     image: redis:8

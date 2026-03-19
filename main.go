@@ -69,6 +69,8 @@ func main() {
 	}
 	log.Println("Running in mode: ", cfg.Server.Mode)
 
+	chunkHandler := chunk.NewHandler(cfg)
+
 	http.HandleFunc("/api/sids", generateHandler)
 
 	switch cfg.Server.Mode {
@@ -77,7 +79,7 @@ func main() {
 	case "stream":
 		stream.Routes()
 	default:
-		chunk.Routes()
+		chunkHandler.Routes()
 	}
 
 }

@@ -21,6 +21,7 @@ func LoadConfig() (config *Config, err error) {
 	v.SetDefault("redis.address", "localhost:6379")
 	v.SetDefault("redis.password", "changeme")
 	v.SetDefault("redis.master_name", "")
+	v.SetDefault("redis.enable_gzip", false)
 
 	// config read from yaml
 	v.AddConfigPath(".") // search at this directory
