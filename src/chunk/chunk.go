@@ -82,9 +82,10 @@ func init() {
 
 	if cfg.RedisConfig.EnableGzip {
 		AppPrefix = "event_gzip"
+		fmt.Println("Enable Gzip")
 	} else {
 		AppPrefix = "event"
-
+		fmt.Println("NOT Enable Gzip yet")
 	}
 
 	ActiveEvents = AppPrefix + ":active_events"
@@ -110,10 +111,6 @@ type handler struct {
 }
 
 func NewHandler(cfg *config.Config) *handler {
-	if cfg.RedisConfig.EnableGzip {
-
-	}
-
 	return &handler{
 		config: cfg,
 	}
