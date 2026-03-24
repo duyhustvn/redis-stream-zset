@@ -1,6 +1,14 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
+import { Trend } from 'k6/metrics';
 import { randomItem } from './k6-utils.js';
+
+const serverApiTimeMs = new Trend('server_api_time_ms', true);
+const serverRedisTimeMs = new Trend('server_redis_time_ms', true);
+const serverApiTimeActiveMs = new Trend('server_api_time_active_ms', true);
+const serverRedisTimeActiveMs = new Trend('server_redis_time_active_ms', true);
+const serverApiTimeChunkMs = new Trend('server_api_time_chunk_ms', true);
+const serverRedisTimeChunkMs = new Trend('server_redis_time_chunk_ms', true);
 
 export const options = {
   stages: [
@@ -19,6 +27,30 @@ export const options = {
 };
 
 const baseUrl = `http://localhost:8081`;
+
+function captureServerTimings(res) {
+    const apiMs = Number(res.headers['X-Api-Time-Ms']);
+    const redisMs = Number(res.headers['X-Redis-Time-Ms']);
+    const source = res.headers['X-Sync-Source'];
+
+    if (!Number.isNaN(apiMs)) {
+        serverApiTimeMs.add(apiMs);
+    }
+
+    if (!Number.isNaN(redisMs)) {
+        serverRedisTimeMs.add(redisMs);
+    }
+
+    if (source === 'active') {
+        if (!Number.isNaN(apiMs)) serverApiTimeActiveMs.add(apiMs);
+        if (!Number.isNaN(redisMs)) serverRedisTimeActiveMs.add(redisMs);
+    }
+
+    if (source === 'chunk') {
+        if (!Number.isNaN(apiMs)) serverApiTimeChunkMs.add(apiMs);
+        if (!Number.isNaN(redisMs)) serverRedisTimeChunkMs.add(redisMs);
+    }
+}
 
 // Hàm setup() giữ nguyên như cũ để sinh mảng dynamicIds
 // export function setup() {
@@ -65,6 +97,7 @@ export default function (data) {
     // Lặp 10 lần để lấy cuốn chiếu (tối đa 10 x 15.000 = 150.000 bản ghi)
     for (let i = 0; i < 10; i++) {
         let res = http.get(`${baseUrl}/api/sync?last_id=${current_last_id}`);
+        captureServerTimings(res);
 
         // K6 check HTTP status
         let success = check(res, {
@@ -73,16 +106,17 @@ export default function (data) {
 
         // Nếu request lỗi (như server quá tải trả về 500), thoát vòng lặp ngay
         if (!success) {
-            continue;
+            break;
         }
 
         try {
             let body = JSON.parse(res.body);
+            let events = Array.isArray(body?.data) ? body.data : [];
             
             // ĐIỀU KIỆN DỪNG: 
             // Nếu mảng rỗng (hoặc trả về ít hơn 15.000, tùy logic), 
             // nghĩa là app đã đồng bộ đến sát hiện tại (Active Events). Không cần lặp tiếp.
-            if (!Array.isArray(body) || body.length === 0) {
+            if (events.length === 0) {
                 break;
             }
 
@@ -90,7 +124,7 @@ export default function (data) {
             // Dữ liệu từ Redis trả về đã được sort theo SID tăng dần.
             // Do đó, bản ghi cuối cùng trong mảng sẽ chứa SID lớn nhất.
             // Ta lấy SID này làm last_id cho vòng lặp tiếp theo.
-            current_last_id = body[body.length - 1].sid;
+            current_last_id = events[events.length - 1].sid.toString();
 
         } catch (e) {
             console.error("Lỗi parse JSON:", e);

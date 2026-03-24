@@ -18,6 +18,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 	"github.com/sony/sonyflake"
 )
@@ -34,13 +37,41 @@ var ChunkRegistry string
 var PackLockKey string
 
 var (
-	rdb        *redis.Client
-	sf         *sonyflake.Sonyflake
-	ctx        = context.Background()
-	packSignal = make(chan struct{}, 1) // Channel kích hoạt worker
-	carriers   = []string{"Viettel", "Mobifone", "Vinaphone", "Vietnamobile"}
-	categories = []string{"SCAM", "SPAM", "TELEMARKETING", "DEBT_COLLECTION"}
-	actions    = []string{"ADD", "UPDATE", "DELETE"}
+	rdb                  *redis.Client
+	sf                   *sonyflake.Sonyflake
+	ctx                  = context.Background()
+	packSignal           = make(chan struct{}, 1) // Channel kích hoạt worker
+	carriers             = []string{"Viettel", "Mobifone", "Vinaphone", "Vietnamobile"}
+	categories           = []string{"SCAM", "SPAM", "TELEMARKETING", "DEBT_COLLECTION"}
+	actions              = []string{"ADD", "UPDATE", "DELETE"}
+	syncLatencyBuckets   = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30}
+	chunkSyncAPIDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "redis_trunk",
+		Subsystem: "chunk_sync",
+		Name:      "api_duration_seconds",
+		Help:      "Total API duration for /api/sync in chunk mode.",
+		Buckets:   syncLatencyBuckets,
+	}, []string{"source", "status"})
+	chunkSyncRedisDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "redis_trunk",
+		Subsystem: "chunk_sync",
+		Name:      "redis_duration_seconds",
+		Help:      "Accumulated Redis time spent by /api/sync in chunk mode.",
+		Buckets:   syncLatencyBuckets,
+	}, []string{"source", "status"})
+	chunkSyncRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "redis_trunk",
+		Subsystem: "chunk_sync",
+		Name:      "requests_total",
+		Help:      "Total number of /api/sync requests in chunk mode.",
+	}, []string{"source", "status"})
+	chunkSyncRecordsReturned = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "redis_trunk",
+		Subsystem: "chunk_sync",
+		Name:      "records_returned",
+		Help:      "Number of records returned per /api/sync request in chunk mode.",
+		Buckets:   []float64{0, 1, 10, 100, 500, 1000, 5000, 10000, 15000},
+	}, []string{"source"})
 )
 
 func init() {
@@ -95,9 +126,27 @@ func (inst *handler) Routes() {
 	http.HandleFunc("/api/sync", middleware.GzipMiddleware(inst.syncHandler))
 	http.HandleFunc("/api/stats", inst.handleStats)
 	http.HandleFunc("/api/test/setup", inst.handleTestSetup)
+	http.Handle("/metrics", promhttp.Handler())
 
 	fmt.Println("Server đang chạy tại http://:8081")
 	log.Fatal(http.ListenAndServe(":8081", nil))
+}
+
+func setSyncTimingHeaders(w http.ResponseWriter, source string, redisQueryTime, apiDuration time.Duration) {
+	redisMs := float64(redisQueryTime) / float64(time.Millisecond)
+	apiMs := float64(apiDuration) / float64(time.Millisecond)
+
+	w.Header().Set("X-Redis-Time-Ms", fmt.Sprintf("%.3f", redisMs))
+	w.Header().Set("X-Api-Time-Ms", fmt.Sprintf("%.3f", apiMs))
+	w.Header().Set("X-Sync-Source", source)
+	w.Header().Set("Server-Timing", fmt.Sprintf("redis;dur=%.3f, app;dur=%.3f", redisMs, apiMs))
+}
+
+func observeSyncMetrics(source, status string, redisQueryTime, apiDuration time.Duration, recordsReturned int) {
+	chunkSyncAPIDuration.WithLabelValues(source, status).Observe(apiDuration.Seconds())
+	chunkSyncRedisDuration.WithLabelValues(source, status).Observe(redisQueryTime.Seconds())
+	chunkSyncRequestsTotal.WithLabelValues(source, status).Inc()
+	chunkSyncRecordsReturned.WithLabelValues(source).Observe(float64(recordsReturned))
 }
 
 // --- API 1: Generate Data ---
@@ -214,6 +263,14 @@ type SyncResponse struct {
 func (inst *handler) syncHandler(w http.ResponseWriter, r *http.Request) {
 	// 1. Đánh dấu thời điểm bắt đầu API
 	apiStartTime := time.Now()
+	source := "registry"
+	status := "ok"
+	recordsReturned := 0
+	var redisQueryTime time.Duration // Biến lưu tổng thời gian gọi Redis
+	defer func() {
+		apiDuration := time.Since(apiStartTime)
+		observeSyncMetrics(source, status, redisQueryTime, apiDuration, recordsReturned)
+	}()
 
 	lastIDStrQuery := r.URL.Query().Get("last_id")
 	lastID, err := strconv.ParseUint(lastIDStrQuery, 10, 64)
@@ -227,7 +284,6 @@ func (inst *handler) syncHandler(w http.ResponseWriter, r *http.Request) {
 	minLex := "(" + lastIDStr + ":"
 
 	var resultEvents []model.EventLog
-	var redisQueryTime time.Duration // Biến lưu tổng thời gian gọi Redis
 
 	// 2. Đo thời gian query Registry
 	redisStartTime := time.Now()
@@ -241,12 +297,15 @@ func (inst *handler) syncHandler(w http.ResponseWriter, r *http.Request) {
 	}).Result()
 	redisQueryTime += time.Since(redisStartTime)
 	if err != nil {
+		status = "error"
 		log.Printf("Query Registry Redis failed: %+v", err)
+		setSyncTimingHeaders(w, source, redisQueryTime, time.Since(apiStartTime))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	if len(chunks) > 0 {
+		source = "chunk"
 		parts := strings.SplitN(chunks[0], ":", 2)
 		chunkKey := parts[1]
 
@@ -257,25 +316,55 @@ func (inst *handler) syncHandler(w http.ResponseWriter, r *http.Request) {
 			chunkDataCompressed, err := rdb.Get(ctx, chunkKey).Bytes()
 			redisQueryTime += time.Since(getChunkStartTime)
 			if err != nil {
+				status = "error"
 				log.Printf("Query Chunk Redis failed: %+v", err)
+				setSyncTimingHeaders(w, source, redisQueryTime, time.Since(apiStartTime))
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
 
-			gr, _ := gzip.NewReader(bytes.NewReader(chunkDataCompressed))
-			uncompressedJSON, _ := io.ReadAll(gr)
+			gr, err := gzip.NewReader(bytes.NewReader(chunkDataCompressed))
+			if err != nil {
+				status = "error"
+				log.Printf("Create gzip reader for chunk failed: %+v", err)
+				setSyncTimingHeaders(w, source, redisQueryTime, time.Since(apiStartTime))
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			uncompressedJSON, err := io.ReadAll(gr)
 			gr.Close()
+			if err != nil {
+				status = "error"
+				log.Printf("Read gzip chunk failed: %+v", err)
+				setSyncTimingHeaders(w, source, redisQueryTime, time.Since(apiStartTime))
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 
-			json.Unmarshal(uncompressedJSON, &allEvents)
+			if err := json.Unmarshal(uncompressedJSON, &allEvents); err != nil {
+				status = "error"
+				log.Printf("Unmarshal gzip chunk failed: %+v", err)
+				setSyncTimingHeaders(w, source, redisQueryTime, time.Since(apiStartTime))
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		} else {
 			chunkData, err := rdb.Get(ctx, chunkKey).Result()
 			redisQueryTime += time.Since(getChunkStartTime)
 			if err != nil {
+				status = "error"
 				log.Printf("Query Chunk Redis failed: %+v", err)
+				setSyncTimingHeaders(w, source, redisQueryTime, time.Since(apiStartTime))
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			json.Unmarshal([]byte(chunkData), &allEvents)
+			if err := json.Unmarshal([]byte(chunkData), &allEvents); err != nil {
+				status = "error"
+				log.Printf("Unmarshal chunk failed: %+v", err)
+				setSyncTimingHeaders(w, source, redisQueryTime, time.Since(apiStartTime))
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 
 		for _, ev := range allEvents {
@@ -284,6 +373,7 @@ func (inst *handler) syncHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	} else {
+		source = "active"
 		// NẾU KHÔNG CÓ TRONG REGISTRY -> TÌM TRONG ACTIVE EVENTS
 		activeStartTime := time.Now()
 		activeEventsStr, err := rdb.ZRangeArgs(ctx, redis.ZRangeArgs{
@@ -296,7 +386,9 @@ func (inst *handler) syncHandler(w http.ResponseWriter, r *http.Request) {
 		}).Result()
 		redisQueryTime += time.Since(activeStartTime)
 		if err != nil {
+			status = "error"
 			log.Printf("Query Acive Events Redis failed: %+v", err)
+			setSyncTimingHeaders(w, source, redisQueryTime, time.Since(apiStartTime))
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -323,9 +415,11 @@ func (inst *handler) syncHandler(w http.ResponseWriter, r *http.Request) {
 			"data":  active,
 		}
 
+		recordsReturned = len(active)
+		apiDuration := time.Since(apiStartTime)
+		setSyncTimingHeaders(w, source, redisQueryTime, apiDuration)
 		json.NewEncoder(w).Encode(response)
 
-		apiDuration := time.Since(apiStartTime)
 		log.Printf("[SYNC API - ACTIVE] last_id: %d | Records: %d | Redis Time: %v | Total API Time: %v",
 			lastID, len(active), redisQueryTime, apiDuration)
 		return
@@ -342,10 +436,12 @@ func (inst *handler) syncHandler(w http.ResponseWriter, r *http.Request) {
 		Data:  resultEvents,
 	}
 
+	recordsReturned = response.Count
+	apiDuration := time.Since(apiStartTime)
+	setSyncTimingHeaders(w, source, redisQueryTime, apiDuration)
 	json.NewEncoder(w).Encode(response)
 
 	// 4. Tính toán tổng thời gian API và Log ra console
-	apiDuration := time.Since(apiStartTime)
 	log.Printf("[SYNC API] last_id: %d | Records: %d | Redis Time: %v | Total API Time: %v",
 		lastID, response.Count, redisQueryTime, apiDuration)
 }
