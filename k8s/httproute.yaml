@@ -3,6 +3,7 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: redis-stream-zset
+  namespace: backend
   annotations:
     "app.kubernetes.io/managed-by": "helm"
     "meta.helm.sh/release-name": "redis-stream-zset"
