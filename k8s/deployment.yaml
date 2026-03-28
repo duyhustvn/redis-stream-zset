@@ -25,7 +25,7 @@ spec:
             - name: REDIS_MODE
               value: sentinel
             - name: REDIS_ADDRESS
-              value: redis-headless:26379
+              value: redis-headless.redis.svc.cluster.local:26379
             - name: REDIS_MASTER_NAME
               value: redis-master
             - name: REDIS_PASSWORD
